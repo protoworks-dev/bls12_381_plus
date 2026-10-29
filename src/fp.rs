@@ -270,7 +270,9 @@ impl OsswuMap for Fp {
         let e3 = self.sgn0() ^ y2.sgn0();
         y2.conditional_negate(e3);
 
-        (x2n * xd.invert().unwrap(), y2)
+        // xd is never zero (the CMOV above), and the inverse is inv0
+        // regardless (RFC9380#6.5#001).
+        (x2n * xd.invert().unwrap_or(Fp::ZERO), y2)
     }
 }
 
@@ -280,18 +282,16 @@ impl Fp {
     /// 11-isogeny to E1 (§6.6.3, Appendix E.2).
     pub(crate) fn map_to_curve(&self) -> G1Projective {
         let (rx, ry) = self.osswu();
-        let (qx, qy) = Fp::iso_map(rx, ry);
-        G1Projective {
-            x: qx,
-            y: qy,
-            z: Fp::ONE,
-        }
+        Fp::iso_map(rx, ry)
     }
 
     /// The 11-isogeny map from E1' to E1 of RFC 9380 Appendix E.2:
     /// `x = x_num / x_den` and `y = y' * y_num / y_den`, each polynomial
-    /// evaluated at `x'` over the powers `x'^0` to `x'^15`.
-    fn iso_map(x: Fp, y: Fp) -> (Fp, Fp) {
+    /// evaluated at `x'` over the powers `x'^0` to `x'^15`. Where either
+    /// denominator is zero the point is the identity of E1 (§6.6.3): `x_den`
+    /// is the square of the isogeny's kernel polynomial, whose five roots all
+    /// lie in Fp, so such an `x'` is an input this map can be given.
+    pub(crate) fn iso_map(x: Fp, y: Fp) -> G1Projective {
         use crate::isogeny::g1::{XDEN, XNUM, YDEN, YNUM};
 
         let mut xs = [Fp::ONE; 16];
@@ -301,11 +301,31 @@ impl Fp {
             power *= x;
         }
         let x_num = Fp::iso_polynomial(&xs, &XNUM);
-        let x_den = Fp::iso_polynomial(&xs, &XDEN).invert().unwrap();
+        let x_den = Fp::iso_polynomial(&xs, &XDEN);
         let y_num = Fp::iso_polynomial(&xs, &YNUM) * y;
-        let y_den = Fp::iso_polynomial(&xs, &YDEN).invert().unwrap();
+        let y_den = Fp::iso_polynomial(&xs, &YDEN);
+        // RFC9380#6.6.3#001: a zero denominator gives the identity of E1.
+        let exceptional = x_den.is_zero() | y_den.is_zero();
+        let point = G1Projective {
+            x: x_num * x_den.invert().unwrap_or(Fp::ZERO),
+            y: y_num * y_den.invert().unwrap_or(Fp::ZERO),
+            z: Fp::ONE,
+        };
+        G1Projective::conditional_select(&point, &G1Projective::IDENTITY, exceptional)
+    }
 
-        (x_num * x_den, y_num * y_den)
+    /// `x_den` of the 11-isogeny of RFC 9380 Appendix E.2 at `x'`.
+    #[cfg(test)]
+    pub(crate) fn iso_x_den(x: Fp) -> Fp {
+        use crate::isogeny::g1::XDEN;
+
+        let mut xs = [Fp::ONE; 16];
+        let mut power = Fp::ONE;
+        for xi in xs.iter_mut() {
+            *xi = power;
+            power *= x;
+        }
+        Fp::iso_polynomial(&xs, &XDEN)
     }
 
     /// `sum(k_i * x^i)` for the coefficients `k` over the powers `xs`.
@@ -1291,4 +1311,97 @@ fn test_zeroize() {
     let mut a = Fp::ONE;
     a.zeroize();
     assert!(bool::from(a.is_zero()));
+}
+
+/// RFC 9380 §6.6.2's exceptional inputs to the simplified SWU map onto E1'
+/// (RFC9380#6.5#001, RFC9380#6.6.2#001): `Z^2 * u^4 + Z * u^2 == 0` at
+/// `u = 0` and at `u^2 = -1 / Z`. With `Z = 11` (§8.8.1) and `p = 3 mod 4`,
+/// `-1` and `11` are both non-squares, so `-1 / 11` is a square and there are
+/// three such `u`. Each must map to `x' = B' / (Z * A')`, on E1', with
+/// `sgn0(y') == sgn0(u)`, and through the 11-isogeny onto E1.
+#[test]
+fn rfc9380_sswu_g1_at_its_exceptional_u() {
+    let a = Fp::PARAMS.map_a;
+    let b = Fp::PARAMS.map_b;
+    let z = Fp::PARAMS.z;
+    assert_eq!(z, Fp::from(11u64), "Z of BLS12381G1 (§8.8.1)");
+    let root = (-z.invert().unwrap()).sqrt();
+    assert!(bool::from(root.is_some()), "-1 / Z is a square in Fp");
+    let root = root.unwrap();
+    let expected_x = b * (z * a).invert().unwrap();
+    for u in [Fp::ZERO, root, -root] {
+        assert!(bool::from(
+            (z.square() * u.square().square() + z * u.square()).is_zero()
+        ));
+        let (x, y) = u.osswu();
+        assert_eq!(x, expected_x, "x' = B' / (Z * A')");
+        assert_eq!(y.square(), (x.square() + a) * x + b, "(x', y') lies on E1'");
+        assert_eq!(
+            bool::from(y.sgn0()),
+            bool::from(u.sgn0()),
+            "sgn0(y') == sgn0(u)"
+        );
+        assert!(
+            bool::from(u.map_to_curve().is_on_curve()),
+            "the image lies on E1"
+        );
+    }
+}
+
+/// An element of Fp from 96 hexadecimal digits, big-endian.
+#[cfg(test)]
+fn fp_from_hex(hex: &str) -> Fp {
+    let mut be = [0u8; 48];
+    for (i, byte) in be.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
+    }
+    Fp::from_bytes(&be).unwrap()
+}
+
+/// One of the five x-coordinates of the kernel of G1's 11-isogeny, all in
+/// Fp: a root of the Appendix E.2 `x_den`.
+#[cfg(test)]
+const G1_KERNEL_X: &str = "010ef325dd1e98bdf0d97a4c6b7f968ed7f31f2fbff088acb39d5319cfc261ea18773405f325612742f0c5d90634bcf4";
+
+/// RFC9380#6.6.3#001: an input that makes a denominator of iso_map zero
+/// returns the identity of E. G1's 11-isogeny has `x_den = h(x')^2` for its
+/// kernel polynomial `h` of degree 5, and `gcd(x^p - x, h)` has degree 5:
+/// every kernel x-coordinate lies in Fp. `x'` below is one of them, found by
+/// splitting `h` over Fp; the test checks it is a root rather than trusting
+/// that. An input beside it is mapped to a point that is not the identity.
+#[test]
+fn rfc9380_g1_iso_map_is_the_identity_where_its_denominators_vanish() {
+    let x = fp_from_hex(G1_KERNEL_X);
+    assert!(
+        bool::from(Fp::iso_x_den(x).is_zero()),
+        "x' is a root of x_den"
+    );
+    assert!(bool::from(Fp::iso_map(x, Fp::ONE).is_identity()));
+    let beside = x + Fp::ONE;
+    assert!(!bool::from(Fp::iso_x_den(beside).is_zero()));
+    assert!(!bool::from(Fp::iso_map(beside, Fp::ONE).is_identity()));
+}
+
+/// RFC9380#6.6.3#001 from the input of `map_to_curve`. 11 divides the order
+/// of E1(Fp), so the kernel points of the 11-isogeny lie on E1'(Fp), and the
+/// simplified SWU map reaches them: at the `u` below, its `x1` branch gives
+/// `x' = G1_KERNEL_X` (`u` solves `x1 = x'` of §6.6.2 step 2 for `Z * u^2`).
+/// A caller's own `expand_message` can hand hash_to_field any `u`, so
+/// `encode` reaches this case. The map gives the identity of E1.
+#[test]
+fn rfc9380_g1_map_to_curve_at_a_u_the_sswu_map_sends_into_the_kernel() {
+    let u = fp_from_hex(
+        "1377c0192d99508a317127abf17c64205c7aad448380027efb47ae73ea231dbd6ecd3f2841b63d309c35bb8fd13e48f0",
+    );
+    let (x, _) = u.osswu();
+    assert_eq!(
+        x,
+        fp_from_hex(G1_KERNEL_X),
+        "the SWU image of u is a kernel point"
+    );
+    assert!(bool::from(Fp::iso_x_den(x).is_zero()));
+    assert!(
+        bool::from(u.map_to_curve().is_identity()),
+        "map_to_curve(u) is the identity"
+    );
 }

@@ -55,6 +55,14 @@ the trait impls built on them, and for `expand_message`.
   octets.
 - **The 0.14 `AffineCoordinates::FieldRepr`** is `elliptic_curve::array::Array`
   in place of 0.13's `GenericArray`.
+- **The simplified SWU map onto E2'** takes `inv0` of `Z^2 * u^4 + Z * u^2`
+  and sets `x1 = B' / (Z * A')` where that is zero, as RFC 9380 §6.6.2 asks.
+  It used to take `invert().unwrap()`, which panicked at `u = 0`, and to
+  test `x1 == 0` for the exceptional case, a condition no `u` in Fp2 meets.
+- **Both isogeny maps** return the identity where a denominator is zero, as
+  RFC 9380 §6.6.3 requires. They used to `invert().unwrap()` it and panic.
+  G1's 11-isogeny has five such `x'` in Fp, and G2's 3-isogeny has
+  `x' = -6 + 6 * I`.
 - **MSRV** is 1.88, the `rust-version` of `sha2` 0.11.1.
 
 ## Proof
@@ -70,5 +78,11 @@ the trait impls built on them, and for `expand_message`.
   `tests/fixtures/rfc9380-appendix-j9.1-k1-k2-k6.json`.
 - The crate's own tests still carry Appendix J.9.1, J.9.2, J.10.1 and J.10.2
   for G1 and G2.
+- The exceptional cases have tests of their own, each failing with its fix
+  reverted: G1 at `u = 0` and `u = ±sqrt(-1 / 11)`, G2 at `u = 0`, each onto
+  `x' = B' / (Z * A')` on the isogenous curve and onto the curve itself;
+  each isogeny map at a root of its `x_den`, which gives the identity, and
+  beside it, which does not; and G1's whole map at a `u` the SWU map sends to
+  a kernel point (11 divides the order of E1(Fp)), which gives the identity.
 - `cargo tree -i crypto-bigint` shows only 0.7.x, through `elliptic-curve`
   0.14.

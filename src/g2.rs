@@ -1246,11 +1246,19 @@ impl G2Projective {
             ]),
         };
 
+        // RFC 9380 §6.6.2, steps 1 to 3: tv1 = inv0(Z^2 * u^4 + Z * u^2),
+        // x1 = (-B / A) * (1 + tv1), and x1 = B / (Z * A) where tv1 == 0.
+        // Z_INV is -1 / Z, so that case is Z_INV * (-B / A). Over Fp2 the
+        // denominator is zero at u = 0 alone: -1 / Z is not a square.
+        // RFC9380#6.5#001: the inverse is inv0, never an inverse of zero.
+        // RFC9380#6.6.2#001: Z meets the criteria that make g(B / (Z * A))
+        // a square, so the exceptional case still has a y.
         let tv1 = Z * u.square();
         let mut tv2 = tv1.square();
-        let mut x1 = (tv1 + tv2).invert().unwrap();
+        let den = tv1 + tv2;
+        let mut x1 = den.invert().unwrap_or(Fp2::ZERO);
         x1 += Fp2::ONE;
-        x1.conditional_assign(&Z_INV, x1.is_zero());
+        x1.conditional_assign(&Z_INV, den.is_zero());
         x1 *= M_B_OVER_A;
         let gx1 = ((x1.square() + A) * x1) + B;
         let x2 = tv1 * x1;
@@ -1265,7 +1273,10 @@ impl G2Projective {
         Self { x, y, z: Fp2::ONE }
     }
 
-    /// Computes the isogeny map for this point
+    /// The 3-isogeny map from E2' to E2 of RFC 9380 Appendix E.3, read at
+    /// this point's affine `(x', y')` (the map's own output has `z = 1`).
+    /// Where either denominator is zero the point is the identity of E2
+    /// (§6.6.3): `x_den` vanishes at `x' = -6 + 6 * I`.
     fn isogeny_map(&self) -> Self {
         use crate::isogeny::g2::*;
 
@@ -1287,9 +1298,11 @@ impl G2Projective {
         let y_num = compute(&xs, &YNUM);
         let y_den = compute(&xs, &YDEN);
 
-        let x = x_num * x_den.invert().unwrap();
-        let y = self.y * y_num * y_den.invert().unwrap();
-        Self { x, y, z: Fp2::ONE }
+        // RFC9380#6.6.3#001: a zero denominator gives the identity of E2.
+        let exceptional = x_den.is_zero() | y_den.is_zero();
+        let x = x_num * x_den.invert().unwrap_or(Fp2::ZERO);
+        let y = self.y * y_num * y_den.invert().unwrap_or(Fp2::ZERO);
+        Self::conditional_select(&Self { x, y, z: Fp2::ONE }, &Self::IDENTITY, exceptional)
     }
 
     impl_pippenger_sum_of_products!();
@@ -2694,4 +2707,87 @@ fn test_hex() {
     let g2 = G2Affine::from_uncompressed_hex(&hex).map(G2Projective::from);
     assert_eq!(g2.is_some().unwrap_u8(), 1u8);
     assert_eq!(g1, g2.unwrap());
+}
+
+/// The constants of the BLS12381G2 suites' map (RFC 9380 §8.8.2), written
+/// from the RFC rather than read from the map: `Z = -(2 + I)`,
+/// `A' = 240 * I` and `B' = 1012 * (1 + I)`.
+#[cfg(test)]
+fn rfc9380_e2_prime_constants() -> (Fp2, Fp2, Fp2) {
+    let z = -Fp2 {
+        c0: Fp::from(2u64),
+        c1: Fp::ONE,
+    };
+    let a = Fp2 {
+        c0: Fp::ZERO,
+        c1: Fp::from(240u64),
+    };
+    let b = Fp2 {
+        c0: Fp::from(1012u64),
+        c1: Fp::from(1012u64),
+    };
+    (z, a, b)
+}
+
+/// RFC 9380 §6.6.2's exceptional input to the simplified SWU map onto E2'
+/// (RFC9380#6.5#001, RFC9380#6.6.2#001): `Z^2 * u^4 + Z * u^2 == 0` at
+/// `u = 0` and at `u^2 = -1 / Z`. `-1` is a square in Fp2 and `Z` is not, so
+/// `-1 / Z` is not: `u = 0` is the one such input. It must map to
+/// `x' = B' / (Z * A')`, on E2', with `sgn0(y') = sgn0(0) = 0`, and through
+/// the 3-isogeny onto E2.
+#[test]
+fn rfc9380_sswu_g2_at_its_exceptional_u() {
+    let (z, a, b) = rfc9380_e2_prime_constants();
+    assert!(
+        bool::from((-z.invert().unwrap()).sqrt().is_none()),
+        "-1 / Z is not a square in Fp2"
+    );
+    let p = G2Projective::sswu_map(&Fp2::ZERO);
+    assert_eq!(p.z, Fp2::ONE);
+    assert_eq!(p.x, b * (z * a).invert().unwrap(), "x' = B' / (Z * A')");
+    assert_eq!(
+        p.y.square(),
+        (p.x.square() + a) * p.x + b,
+        "(x', y') lies on E2'"
+    );
+    assert!(!bool::from(p.y.sgn0()), "sgn0(y') == sgn0(0)");
+    let q = p.isogeny_map();
+    assert!(bool::from(q.is_on_curve()), "the image lies on E2");
+    assert!(!bool::from(q.is_identity()));
+}
+
+/// RFC9380#6.6.3#001: an input that makes a denominator of iso_map zero
+/// returns the identity of E. For G2's 3-isogeny (Appendix E.3),
+/// `x_den = x'^2 + k_(2,1) * x' + k_(2,0)` with `k_(2,1) = 12 - 12 * I` and
+/// `k_(2,0) = -72 * I` has discriminant 0, so its one root is
+/// `x' = -k_(2,1) / 2 = -6 + 6 * I`. An input beside it is not the identity.
+#[test]
+fn rfc9380_g2_isogeny_map_is_the_identity_where_its_denominators_vanish() {
+    let six = Fp::from(6u64);
+    let twelve = Fp::from(12u64);
+    let x = Fp2 { c0: -six, c1: six };
+    let k21 = Fp2 {
+        c0: twelve,
+        c1: -twelve,
+    };
+    let k20 = Fp2 {
+        c0: Fp::ZERO,
+        c1: -Fp::from(72u64),
+    };
+    assert!(
+        bool::from((x.square() + k21 * x + k20).is_zero()),
+        "x' is the root of x_den"
+    );
+    let at = G2Projective {
+        x,
+        y: Fp2::ONE,
+        z: Fp2::ONE,
+    };
+    assert!(bool::from(at.isogeny_map().is_identity()));
+    let beside = G2Projective {
+        x: x + Fp2::ONE,
+        y: Fp2::ONE,
+        z: Fp2::ONE,
+    };
+    assert!(!bool::from(beside.isogeny_map().is_identity()));
 }

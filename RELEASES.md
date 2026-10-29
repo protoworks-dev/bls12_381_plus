@@ -1,3 +1,8 @@
+# 0.9.0-ptwd.4
+
+- The G2 simplified SWU map no longer panics at `u = 0`: it takes `inv0` and sets `x1 = B' / (Z * A')` on the exceptional case (RFC 9380 §6.6.2).
+- The G1 and G2 isogeny maps return the identity where a denominator is zero, in place of panicking (RFC 9380 §6.6.3).
+
 # 0.9.0-ptwd.3
 
 - The RFC 9380 test's own `expand_message` elides the DST lifetime its expander does not hold, as clippy's `needless_lifetimes` asks. The library is unchanged from 0.9.0-ptwd.2.
