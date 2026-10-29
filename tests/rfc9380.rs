@@ -31,12 +31,13 @@ fn text(value: &Value) -> &str {
 fn check_appendix_k(
     section: &str,
     hash: &str,
-    k: u64,
+    k: &str,
     expand: impl Fn(&[u8], &[u8], NonZeroU16) -> Vec<u8>,
 ) {
     let suite = &vectors()[section];
     assert_eq!(text(&suite["hash"]), hash);
-    assert_eq!(suite["k"].as_u64(), Some(k));
+    // The appendix prints k as a decimal string, as the fixture keeps it.
+    assert_eq!(text(&suite["k"]), k);
     let dst = text(&suite["DST"]).as_bytes();
     let cases = suite["cases"].as_array().unwrap();
     assert_eq!(cases.len(), 10);
@@ -69,7 +70,7 @@ fn expand_message_xmd_sha256_meets_appendix_k_1() {
     check_appendix_k(
         "K.1",
         "SHA256",
-        128,
+        "128",
         expand_with::<ExpandMsgXmd<Sha256>, U16>,
     );
 }
@@ -79,7 +80,7 @@ fn expand_message_xmd_sha256_long_dst_meets_appendix_k_2() {
     check_appendix_k(
         "K.2",
         "SHA256",
-        128,
+        "128",
         expand_with::<ExpandMsgXmd<Sha256>, U16>,
     );
 }
@@ -89,7 +90,7 @@ fn expand_message_xof_shake256_meets_appendix_k_6() {
     check_appendix_k(
         "K.6",
         "SHAKE256",
-        256,
+        "256",
         expand_with::<ExpandMsgXof<Shake256>, U32>,
     );
 }

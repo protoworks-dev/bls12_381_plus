@@ -1,3 +1,8 @@
+# 0.9.0-ptwd.2
+
+- `Fp::to_bytes` takes `self` by value, as a `to_*` method of a `Copy` type does; method calls on `Fp` and `&Fp` are unchanged, and only `Fp::to_bytes(&x)` must become `x.to_bytes()`. Clippy's `wrong_self_convention` refused the build without `expose-fields`.
+- The RFC 9380 Appendix K tests read the target security level `k` as the decimal string the fixture keeps.
+
 # 0.9.0-ptwd.1
 
 - Removed `elliptic-curve` 0.13, and with it `crypto-bigint` 0.5, from the dependency graph (RUSTSEC-2026-0387). See `PTWD.md`.
