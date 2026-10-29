@@ -3,7 +3,7 @@
 This crate provides an implementation of the BLS12-381 pairing-friendly elliptic curve construction with [hash-to-curve](https://www.rfc-editor.org/rfc/rfc9380.html) and multi-exponentiation methods such as Straus and Pippenger.
 
 * **This implementation has not been reviewed or audited. Use at your own risk.**
-* This implementation targets Rust `1.87` or later.
+* This implementation targets Rust `1.88` or later.
 * This implementation does not require the Rust standard library.
 * All operations are constant time unless explicitly noted.
 

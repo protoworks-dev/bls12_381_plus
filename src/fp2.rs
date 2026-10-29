@@ -6,8 +6,8 @@ use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 use crate::fp::Fp;
+use crate::hash_to_curve::{ExpandMsg, SecurityLevel, Sgn0, expand_message};
 use core::convert::TryFrom;
-use elliptic_curve_013::hash2curve::{ExpandMsg, Expander, Sgn0};
 
 /// A point in the multiplicative group of order p^2
 #[derive(Copy, Clone)]
@@ -120,12 +120,10 @@ impl_binops_additive!(Fp2, Fp2);
 impl_binops_multiplicative!(Fp2, Fp2);
 
 impl Sgn0 for Fp2 {
+    /// `sgn0` of RFC 9380 §4.1 for `m = 2`: `sign_0 OR (zero_0 AND sign_1)`,
+    /// in constant time.
     fn sgn0(&self) -> Choice {
-        if self.c0.is_zero().into() {
-            self.c1.sgn0()
-        } else {
-            self.c0.sgn0()
-        }
+        self.c0.sgn0() | (self.c0.is_zero() & self.c1.sgn0())
     }
 }
 
@@ -377,12 +375,9 @@ impl Fp2 {
 
     pub(crate) fn hash<X>(msg: &[u8], dst: &[u8]) -> [Self; 2]
     where
-        X: for<'a> ExpandMsg<'a>,
+        X: ExpandMsg<SecurityLevel>,
     {
-        let dst = [dst];
-        let mut random_bytes = [0u8; 256];
-        let mut expander = X::expand_message(&[msg], &dst, random_bytes.len()).unwrap();
-        expander.fill_bytes(&mut random_bytes);
+        let random_bytes: [u8; 256] = expand_message::<X, 256>(msg, dst);
         [
             Fp2::from_random_bytes(<[u8; 128]>::try_from(&random_bytes[..128]).unwrap()),
             Fp2::from_random_bytes(<[u8; 128]>::try_from(&random_bytes[128..]).unwrap()),
@@ -391,13 +386,9 @@ impl Fp2 {
 
     pub(crate) fn encode<X>(msg: &[u8], dst: &[u8]) -> Self
     where
-        X: for<'a> ExpandMsg<'a>,
+        X: ExpandMsg<SecurityLevel>,
     {
-        let dst = [dst];
-        let mut random_bytes = [0u8; 128];
-        let mut expander = X::expand_message(&[msg], &dst, random_bytes.len()).unwrap();
-        expander.fill_bytes(&mut random_bytes);
-        Fp2::from_random_bytes(random_bytes)
+        Fp2::from_random_bytes(expand_message::<X, 128>(msg, dst))
     }
 }
 

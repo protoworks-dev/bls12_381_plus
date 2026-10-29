@@ -19,14 +19,9 @@ use group_013::WnafGroup;
 
 use crate::Scalar;
 use crate::fp::Fp;
+use crate::hash_to_curve::{ExpandMsg, ExpandMsgXmd, SecurityLevel};
 use crate::util::decode_hex_into_slice;
-use elliptic_curve_013::hash2curve::{ExpandMsgXmd, Sgn0};
-use elliptic_curve_013::ops::{LinearCombination, MulByGenerator};
-use elliptic_curve_013::point::AffineCoordinates;
-use elliptic_curve_013::{
-    group::cofactor::CofactorGroup,
-    hash2curve::{ExpandMsg, MapToCurve},
-};
+use group_013::cofactor::CofactorGroup;
 
 /// This is an element of $\mathbb{G}_1$ represented in the affine coordinate space.
 /// It is ideal to keep elements in this representation to reduce memory usage and
@@ -226,18 +221,6 @@ const B: Fp = Fp::from_raw_unchecked([
     0x8ec9_733b_bf78_ab2f,
     0x09d6_4551_3d83_de7e,
 ]);
-
-impl AffineCoordinates for G1Affine {
-    type FieldRepr = [u8; 48];
-
-    fn x(&self) -> Self::FieldRepr {
-        self.x.to_bytes()
-    }
-
-    fn y_is_odd(&self) -> Choice {
-        self.y.sgn0()
-    }
-}
 
 impl G1Affine {
     /// Bytes to represent this point compressed
@@ -756,10 +739,6 @@ fn mul_by_3b(a: Fp) -> Fp {
     a + a + a // 12
 }
 
-impl MulByGenerator for G1Projective {}
-
-impl LinearCombination for G1Projective {}
-
 impl G1Projective {
     /// Bytes to represent this point compressed
     pub const COMPRESSED_BYTES: usize = 48;
@@ -1055,10 +1034,17 @@ impl G1Projective {
             | self.z.is_zero()
     }
 
-    /// Use a random oracle to map a value to a curve point
+    /// `hash_to_curve` of RFC 9380 §3, the random-oracle encoding, with the
+    /// simplified SWU map and 11-isogeny of the BLS12381G1 suites (§8.8.1):
+    /// `X` is the suite's `expand_message`, at the suites' security level.
+    ///
+    /// # Panics
+    ///
+    /// When `X` refuses `dst` (RFC 9380 §3.1: a DST is nonempty) or yields
+    /// fewer octets than asked.
     pub fn hash<X>(msg: &[u8], dst: &[u8]) -> Self
     where
-        X: for<'a> ExpandMsg<'a>,
+        X: ExpandMsg<SecurityLevel>,
     {
         {
             let u = Fp::hash::<X>(msg, dst);
@@ -1067,10 +1053,16 @@ impl G1Projective {
         .clear_cofactor()
     }
 
-    /// Use injective encoding to map a value to a curve point
+    /// `encode_to_curve` of RFC 9380 §3, the nonuniform encoding, with the
+    /// map of the BLS12381G1 suites (§8.8.1): `X` is the suite's
+    /// `expand_message`, or a caller's own that hands back octets it holds.
+    ///
+    /// # Panics
+    ///
+    /// When `X` refuses `dst` or yields fewer octets than asked.
     pub fn encode<X>(msg: &[u8], dst: &[u8]) -> Self
     where
-        X: for<'a> ExpandMsg<'a>,
+        X: ExpandMsg<SecurityLevel>,
     {
         let u = Fp::encode::<X>(msg, dst);
         u.map_to_curve().clear_cofactor()
@@ -2111,7 +2103,6 @@ fn test_sum_of_products_alloc() {
 
 #[test]
 fn test_hash() {
-    use elliptic_curve_013::hash2curve::ExpandMsgXmd;
     use std::convert::TryFrom;
     const DST: &[u8] = b"QUUX-V01-CS02-with-BLS12381G1_XMD:SHA-256_SSWU_RO_";
 

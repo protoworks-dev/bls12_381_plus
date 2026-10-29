@@ -2,18 +2,14 @@
 //! where `p = 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab`
 
 use crate::G1Projective;
+use crate::hash_to_curve::{
+    ExpandMsg, FromOkm, OsswuMap, OsswuMapParams, SecurityLevel, Sgn0, expand_message,
+};
 use core::convert::TryFrom;
 use core::fmt;
 use core::iter::{Iterator, Product, Sum};
 use core::ops::{Add, AddAssign, BitOr, Mul, MulAssign, Neg, Sub, SubAssign};
-use elliptic_curve_013::{
-    bigint::{ByteArray, U512},
-    consts::U16,
-    hash2curve::{
-        ExpandMsg, Expander, FromOkm, Isogeny, IsogenyCoefficients, MapToCurve, OsswuMap,
-        OsswuMapParams, Sgn0,
-    },
-};
+use elliptic_curve::{array::Array, consts::U64};
 use ff_013::Field;
 use rand_core::RngCore;
 use subtle::{Choice, ConditionallyNegatable, ConditionallySelectable, ConstantTimeEq, CtOption};
@@ -175,9 +171,9 @@ impl_binops_additive!(Fp, Fp);
 impl_binops_multiplicative!(Fp, Fp);
 
 impl FromOkm for Fp {
-    type Length = <U512 as elliptic_curve_013::bigint::ArrayEncoding>::ByteSize;
+    type Length = U64;
 
-    fn from_okm(data: &ByteArray<U512>) -> Self {
+    fn from_okm(data: &Array<u8, U64>) -> Self {
         let input = arrayref::array_ref![data, 0, 64];
         Self::from_random_bytes(*input)
     }
@@ -278,28 +274,48 @@ impl OsswuMap for Fp {
     }
 }
 
-impl MapToCurve for Fp {
-    type Output = G1Projective;
-
-    fn map_to_curve(&self) -> Self::Output {
+impl Fp {
+    /// `map_to_curve` of the suites BLS12381G1_XMD:SHA-256_SSWU_RO_ and
+    /// _NU_ (RFC 9380 §8.8.1): the simplified SWU map onto E1', then the
+    /// 11-isogeny to E1 (§6.6.3, Appendix E.2).
+    pub(crate) fn map_to_curve(&self) -> G1Projective {
         let (rx, ry) = self.osswu();
-        let (qx, qy) = Fp::isogeny(rx, ry);
+        let (qx, qy) = Fp::iso_map(rx, ry);
         G1Projective {
             x: qx,
             y: qy,
             z: Fp::ONE,
         }
     }
-}
 
-impl Isogeny for Fp {
-    type Degree = U16;
-    const COEFFICIENTS: IsogenyCoefficients<Self> = IsogenyCoefficients {
-        xnum: &crate::isogeny::g1::XNUM,
-        xden: &crate::isogeny::g1::XDEN,
-        ynum: &crate::isogeny::g1::YNUM,
-        yden: &crate::isogeny::g1::YDEN,
-    };
+    /// The 11-isogeny map from E1' to E1 of RFC 9380 Appendix E.2:
+    /// `x = x_num / x_den` and `y = y' * y_num / y_den`, each polynomial
+    /// evaluated at `x'` over the powers `x'^0` to `x'^15`.
+    fn iso_map(x: Fp, y: Fp) -> (Fp, Fp) {
+        use crate::isogeny::g1::{XDEN, XNUM, YDEN, YNUM};
+
+        let mut xs = [Fp::ONE; 16];
+        let mut power = Fp::ONE;
+        for xi in xs.iter_mut() {
+            *xi = power;
+            power *= x;
+        }
+        let x_num = Fp::iso_polynomial(&xs, &XNUM);
+        let x_den = Fp::iso_polynomial(&xs, &XDEN).invert().unwrap();
+        let y_num = Fp::iso_polynomial(&xs, &YNUM) * y;
+        let y_den = Fp::iso_polynomial(&xs, &YDEN).invert().unwrap();
+
+        (x_num * x_den, y_num * y_den)
+    }
+
+    /// `sum(k_i * x^i)` for the coefficients `k` over the powers `xs`.
+    fn iso_polynomial(xs: &[Fp], k: &[Fp]) -> Fp {
+        let mut acc = Fp::ZERO;
+        for (xi, ki) in xs.iter().zip(k.iter()) {
+            acc += *xi * ki;
+        }
+        acc
+    }
 }
 
 impl Field for Fp {
@@ -933,12 +949,9 @@ impl Fp {
 
     pub(crate) fn hash<X>(msg: &[u8], dst: &[u8]) -> [Fp; 2]
     where
-        X: for<'a> ExpandMsg<'a>,
+        X: ExpandMsg<SecurityLevel>,
     {
-        let dst = [dst];
-        let mut random_bytes = [0u8; 128];
-        let mut expander = X::expand_message(&[msg], &dst, random_bytes.len()).unwrap();
-        expander.fill_bytes(&mut random_bytes);
+        let random_bytes: [u8; 128] = expand_message::<X, 128>(msg, dst);
         [
             Fp::from_random_bytes(<[u8; 64]>::try_from(&random_bytes[..64]).unwrap()),
             Fp::from_random_bytes(<[u8; 64]>::try_from(&random_bytes[64..]).unwrap()),
@@ -947,13 +960,9 @@ impl Fp {
 
     pub(crate) fn encode<X>(msg: &[u8], dst: &[u8]) -> Fp
     where
-        X: for<'a> ExpandMsg<'a>,
+        X: ExpandMsg<SecurityLevel>,
     {
-        let dst = [dst];
-        let mut random_bytes = [0u8; 64];
-        let mut expander = X::expand_message(&[msg], &dst, random_bytes.len()).unwrap();
-        expander.fill_bytes(&mut random_bytes);
-        Fp::from_random_bytes(random_bytes)
+        Fp::from_random_bytes(expand_message::<X, 64>(msg, dst))
     }
 }
 

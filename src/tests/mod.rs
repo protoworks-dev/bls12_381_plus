@@ -1,6 +1,6 @@
 use super::*;
+use crate::hash_to_curve::ExpandMsgXmd;
 use core::convert::TryFrom;
-use elliptic_curve_013::hash2curve::ExpandMsgXmd;
 
 macro_rules! test_vectors {
     ($projective:ident, $affine:ident, $serialize:ident, $deserialize:ident, $expected:ident) => {

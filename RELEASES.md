@@ -1,3 +1,10 @@
+# 0.9.0-ptwd.1
+
+- Removed `elliptic-curve` 0.13, and with it `crypto-bigint` 0.5, from the dependency graph (RUSTSEC-2026-0387). See `PTWD.md`.
+- `expand_message` comes from `hash2curve` 0.14; the hash-to-curve traits the crate implements live in `hash_to_curve`.
+- `Fp2::sgn0` is constant time, and `Scalar`'s `IsHigh` compares the canonical integer.
+- MSRV 1.88.
+
 # 0.9.0
 
 - Updated core cryptography trait dependencies to their latest compatible patch releases.

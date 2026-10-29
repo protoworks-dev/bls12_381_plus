@@ -6,8 +6,8 @@ extern crate criterion;
 
 use bls12_381_plus::*;
 
+use bls12_381_plus::hash_to_curve::ExpandMsgXmd;
 use criterion::Criterion;
-use elliptic_curve_013::hash2curve::ExpandMsgXmd;
 use std::hint::black_box;
 
 fn criterion_benchmark(c: &mut Criterion) {
