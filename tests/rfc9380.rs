@@ -138,9 +138,9 @@ impl ExpandMsg<U16> for Passthrough {
     type Expander<'dst> = PassthroughReader;
     type Error = Never;
 
-    fn expand_message<'dst>(
+    fn expand_message(
         msg: &[&[u8]],
-        _dst: &'dst [&[u8]],
+        _dst: &[&[u8]],
         _len_in_bytes: NonZeroU16,
     ) -> Result<PassthroughReader, Never> {
         Ok(PassthroughReader {

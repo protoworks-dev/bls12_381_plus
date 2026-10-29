@@ -15,7 +15,7 @@ homepage = "https://github.com/mikelodder7/bls12_381_plus"
 license = "MIT OR Apache-2.0"
 name = "bls12_381_plus"
 repository = "https://github.com/mikelodder7/bls12_381_plus"
-version = "0.9.0-ptwd.2"
+version = "0.9.0-ptwd.3"
 edition = "2024"
 rust-version = "1.88"
 

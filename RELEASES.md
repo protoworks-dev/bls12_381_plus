@@ -1,3 +1,7 @@
+# 0.9.0-ptwd.3
+
+- The RFC 9380 test's own `expand_message` elides the DST lifetime its expander does not hold, as clippy's `needless_lifetimes` asks. The library is unchanged from 0.9.0-ptwd.2.
+
 # 0.9.0-ptwd.2
 
 - `Fp::to_bytes` takes `self` by value, as a `to_*` method of a `Copy` type does; method calls on `Fp` and `&Fp` are unchanged, and only `Fp::to_bytes(&x)` must become `x.to_bytes()`. Clippy's `wrong_self_convention` refused the build without `expose-fields`.
